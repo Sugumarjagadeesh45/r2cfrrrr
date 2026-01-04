@@ -61,10 +61,17 @@ export const setupNotificationListeners = (navigation) => {
   });
 
   messaging.onMessage(async (remoteMessage) => {
-    console.log('FCM Message handled in the foreground!', remoteMessage);
+    console.log('FCM Message received (foreground):');
+    console.log('  Notification:', remoteMessage.notification);
+    console.log('  Data:', remoteMessage.data);
+    console.log('  Sent Time:', remoteMessage.sentTime);
   });
 
   messaging.onNotificationOpenedApp(async (remoteMessage) => {
+    console.log('FCM Notification opened app (background/quit):');
+    console.log('  Notification:', remoteMessage.notification);
+    console.log('  Data:', remoteMessage.data);
+    console.log('  Sent Time:', remoteMessage.sentTime);
     handleNotificationNavigation(remoteMessage.data, navigation);
   });
 
@@ -72,6 +79,10 @@ export const setupNotificationListeners = (navigation) => {
     .getInitialNotification()
     .then((remoteMessage) => {
       if (remoteMessage) {
+        console.log('FCM Initial notification (app launched from quit state):');
+        console.log('  Notification:', remoteMessage.notification);
+        console.log('  Data:', remoteMessage.data);
+        console.log('  Sent Time:', remoteMessage.sentTime);
         handleNotificationNavigation(remoteMessage.data, navigation);
       }
     });
@@ -81,14 +92,23 @@ export const handleNotificationNavigation = (data, navigation) => {
   if (!data || !data.type) {
     return;
   }
+  console.log('handleNotificationNavigation - Data received:', data);
 
   switch (data.type) {
-    case 'NEW_MESSAGE':
+    case 'chat_message': // Use 'chat_message' type as per messag_screen.md
+      // MessageScreen now expects otherUserId, otherUserName, otherUserPhotoURL
+      // If these are directly in data, pass them. Otherwise, map senderId to otherUserId.
       navigation.navigate('Chat', {
-        screen: 'ChatScreen',
+        screen: 'MessageScreen', // Assuming 'ChatScreen' maps to 'MessageScreen'
         params: {
-          senderId: data.senderId,
-          messageId: data.messageId,
+          otherUserId: data.otherUserId || data.senderId, // Prioritize otherUserId, fallback to senderId
+          user: { // Pass a partial user object if available, MessageScreen will fetch full if needed
+            _id: data.otherUserId || data.senderId,
+            name: data.otherUserName || 'Unknown User',
+            photoURL: data.otherUserPhotoURL || 'https://randomuser.me/api/portraits/men/1.jpg', // Default avatar
+            // isOnline: data.isOnline, // If backend sends this
+          },
+          // messageId: data.messageId, // No longer directly used by MessageScreen for fetching partner
         },
       });
       break;
@@ -121,5 +141,8 @@ export const handleNotificationNavigation = (data, navigation) => {
 
 // Background message handler must be outside the function, called once
 messaging.setBackgroundMessageHandler(async (remoteMessage) => {
-  console.log('Message handled in the background!', remoteMessage);
+  console.log('FCM Message handled in the background:');
+  console.log('  Notification:', remoteMessage.notification);
+  console.log('  Data:', remoteMessage.data);
+  console.log('  Sent Time:', remoteMessage.sentTime);
 });

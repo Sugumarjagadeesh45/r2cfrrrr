@@ -205,6 +205,43 @@ class UserService {
       throw error;
     }
   }
+
+  // New method: Get another user's profile by their ID
+  static async getOtherUserProfileById(userId, token) {
+    try {
+      if (!token) {
+        token = await this.getToken(); // Attempt to get token if not provided
+      }
+      if (!userId) {
+        throw new Error('User ID is required to fetch profile');
+      }
+
+      console.log('Making request to:', `${API_URL}/api/user/profile/${userId}`);
+      
+      const response = await fetch(`${API_URL}/api/user/profile/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.status === 401) {
+        await AsyncStorage.removeItem('authToken');
+        throw new Error('Authentication failed. Please login again.');
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status} for user ID: ${userId}`);
+      }
+      
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error(`Error getting user profile for ID ${userId}:`, error);
+      throw error;
+    }
+  }
 }
 
 export default UserService;

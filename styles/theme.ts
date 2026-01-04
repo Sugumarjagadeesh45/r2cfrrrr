@@ -6,4 +6,5 @@ export const theme = {
   textSecondary: 'rgba(255, 255, 255, 0.7)',
   accentColor: '#ff0084',
   activeTab: 'rgba(255, 0, 132, 0.2)',
+  border: 'rgba(255, 255, 255, 0.15)', // Added for consistent borders
 };
