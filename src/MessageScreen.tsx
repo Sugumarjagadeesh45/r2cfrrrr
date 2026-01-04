@@ -995,31 +995,100 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, []);
 
-  // Add this useEffect to initialize socket
+
+
+// In MessageScreen.js, update the useEffect for socket
+// Fix the useEffect for socket listeners
 useEffect(() => {
+  console.log('[MessageScreen] 🚀 Setting up socket listeners');
+  
+  let isMounted = true;
+  let messageHandler = null;
+
   const initializeSocket = async () => {
     try {
-      console.log('[MessageScreen] Initializing socket...');
-      const socketInstance = await socket.initSocket();
-      console.log('[MessageScreen] Socket initialized:', !!socketInstance);
+      await socket.initSocket();
       
-      // Check connection status
-      setTimeout(() => {
-        socket.checkConnection();
-      }, 1000);
+      if (!isMounted) return;
+      
+      messageHandler = (newMessage) => {
+        if (!isMounted) return;
+        
+        console.log('\n[MessageScreen] 📨 RECEIVED MESSAGE');
+        console.log('[MessageScreen] Message ID:', newMessage._id);
+        console.log('[MessageScreen] From:', newMessage.sender?._id);
+        
+        const messageUserId = newMessage.sender._id || newMessage.sender.id;
+        const otherUserId = otherUser?._id || otherUser?.id;
+        
+        // Ignore messages not from current chat partner
+        if (messageUserId !== otherUserId) {
+          console.log('[MessageScreen] ⚠️ Ignoring message from different user');
+          return;
+        }
+        
+        // Check if this is a duplicate (based on message ID)
+        setMessages(prev => {
+          const exists = prev.find(msg => msg._id === newMessage._id);
+          if (exists) {
+            console.log('[MessageScreen] ⚠️ Message already exists, ignoring');
+            return prev;
+          }
+          
+          const formattedMessage = {
+            _id: newMessage._id,
+            text: newMessage.text,
+            createdAt: new Date(newMessage.createdAt),
+            user: {
+              _id: newMessage.sender._id,
+              name: newMessage.sender.name,
+              avatar: newMessage.sender.avatar || newMessage.sender.photoURL,
+            },
+            status: newMessage.status,
+            attachment: newMessage.attachment,
+          };
+          
+          console.log('[MessageScreen] ✅ Adding new message');
+          return [...prev, formattedMessage];
+        });
+      };
+      
+      // Register handler
+      socket.onReceiveMessage(messageHandler);
+      
+      // Add status update listener
+      const statusHandler = (updatedMessage) => {
+        console.log('[MessageScreen] 📊 Status update:', updatedMessage._id);
+        setMessages(prev =>
+          prev.map(msg =>
+            msg._id === updatedMessage._id ? { 
+              ...msg, 
+              status: updatedMessage.status,
+              ...(updatedMessage.deliveredAt && { deliveredAt: updatedMessage.deliveredAt }),
+              ...(updatedMessage.readAt && { readAt: updatedMessage.readAt })
+            } : msg
+          )
+        );
+      };
+      
+      socket.on('messageStatusUpdate', statusHandler);
+      
     } catch (error) {
-      console.error('[MessageScreen] Failed to initialize socket:', error);
+      console.error('[MessageScreen] ❌ Socket init error:', error);
     }
   };
 
   initializeSocket();
 
-  // Cleanup on unmount
+  // Cleanup function
   return () => {
-    console.log('[MessageScreen] Cleaning up socket listeners');
-    socket.disconnectSocket();
+    console.log('[MessageScreen] 🧹 Cleaning up socket listeners');
+    isMounted = false;
+    if (messageHandler) {
+      socket.offReceiveMessage(messageHandler);
+    }
   };
-}, []);
+}, [otherUser?._id]); // Only depend on otherUser._id, not the entire object
 
 
 
@@ -1274,55 +1343,46 @@ useEffect(() => {
   }, [otherUser]);
 
 
-  
+
   const handleSend = () => {
   const otherUserId = otherUser._id || otherUser.id;
   const currentUserId = currentUser?._id || currentUser?.id;
   
-  console.log('[MessageScreen] Attempting to send message:', {
-    otherUserId,
-    currentUserId,
-    inputText,
-    hasSelectedAttachment: !!selectedAttachment,
-    socketStatus: socket.getSocketStatus()
-  });
-  
   if (!otherUserId || !currentUserId || (!inputText.trim() && !selectedAttachment)) {
-    console.warn('[MessageScreen] Cannot send: Missing required data');
     return;
   }
 
-  // Check socket connection
-  const status = socket.getSocketStatus();
-  if (typeof status === 'object' && !status.connected) {
-    console.error('[MessageScreen] ❌ Cannot send: Socket not connected');
-    Alert.alert('Connection Error', 'Please check your internet connection and try again.');
-    return;
-  }
-
-  const tempId = Date.now().toString();
+  // Generate a temporary ID for optimistic update
+  const tempId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
   const newMessage = {
     _id: tempId,
     text: inputText.trim() || '',
     createdAt: new Date(),
-    user: { _id: currentUserId },
+    user: { 
+      _id: currentUserId,
+      name: currentUser?.name || 'You'
+    },
     status: 'pending',
     attachment: selectedAttachment,
   };
 
-  console.log('[MessageScreen] Adding optimistic message:', newMessage);
+  console.log('[MessageScreen] Adding optimistic message with temp ID:', tempId);
   setMessages(prev => [...prev, newMessage]);
   
-  // Try to send via socket
-  const sent = socket.sendMessage(otherUserId, inputText.trim(), selectedAttachment);
+  // Send via socket
+  const success = socket.sendMessage(otherUserId, inputText.trim(), selectedAttachment);
   
-  if (!sent) {
-    console.error('[MessageScreen] ❌ Socket send failed');
-    Alert.alert('Send Failed', 'Could not send message. Please try again.');
-    // Optionally: Fallback to HTTP API
-    sendViaHttpApi(otherUserId, inputText.trim(), selectedAttachment);
-  } else {
+  if (success) {
     console.log('[MessageScreen] ✅ Message sent via socket');
+  } else {
+    console.error('[MessageScreen] ❌ Socket send failed');
+    // Update status to failed
+    setMessages(prev =>
+      prev.map(msg =>
+        msg._id === tempId ? { ...msg, status: 'failed' } : msg
+      )
+    );
   }
   
   setInputText('');

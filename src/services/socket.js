@@ -1,32 +1,47 @@
+// D:\r2c\src\services\socket.js - FIXED VERSION
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import API_URL from '../utiliti/config';
 
 let socket = null;
 let isConnecting = false;
+let connectionAttempts = 0;
+const MAX_CONNECTION_ATTEMPTS = 5;
+
+// Store event handlers
+const eventHandlers = {
+  receiveMessage: [],
+  userStatus: [],
+  typingStatus: [],
+  messageStatusUpdate: [],
+  pong: [],
+  test_response: []
+};
 
 export const initSocket = async (location) => {
   try {
-    console.log('[Socket] initSocket called');
+    console.log('[Socket] 🚀 initSocket called');
+    
+    // If already connected, return existing socket
     if (socket && socket.connected) {
-      console.log('[Socket] Already connected, reusing socket');
+      console.log('[Socket] ✅ Already connected, socket ID:', socket.id);
       return socket;
     }
 
     if (isConnecting) {
-      console.log('[Socket] Already connecting, waiting...');
+      console.log('[Socket] ⏳ Already connecting, waiting...');
       return socket;
     }
 
     isConnecting = true;
     
     const token = await AsyncStorage.getItem('authToken');
-    console.log('[Socket] Token exists:', !!token);
+    console.log('[Socket] 🔑 Token exists:', !!token);
     
     if (!token) {
-      console.log('[Socket] No token for socket connection');
+      console.log('[Socket] ❌ No token for socket connection');
       isConnecting = false;
-      return;
+      return null;
     }
 
     const query = { token };
@@ -34,132 +49,194 @@ export const initSocket = async (location) => {
       query.location = JSON.stringify(location);
     }
 
-    console.log('[Socket] Connecting to:', API_URL);
-    console.log('[Socket] Query params:', query);
+    console.log('[Socket] 🌐 Connecting to:', API_URL);
+    
+    // Clean up previous socket if exists
+    if (socket) {
+      console.log('[Socket] 🧹 Cleaning up previous socket');
+      socket.disconnect();
+      socket.removeAllListeners();
+      socket = null;
+    }
 
-    // Force new connection
+    // Create new socket connection with debug logging
     socket = io(API_URL, {
       query,
-      transports: ['websocket', 'polling'], // Add both for fallback
+      transports: ['websocket', 'polling'],
       forceNew: true,
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      timeout: 20000,
+      autoConnect: true
     });
 
-    // Socket event listeners with detailed logging
+    // ==================== CORE EVENT LISTENERS ====================
+    
     socket.on('connect', () => {
-      console.log('[Socket] ✅ Connected successfully!');
-      console.log('[Socket] Socket ID:', socket.id);
-      console.log('[Socket] Connected to server URL:', API_URL);
+      console.log('\n[Socket] ==========================================');
+      console.log('[Socket] ✅ CONNECTED SUCCESSFULLY!');
+      console.log('[Socket] 📍 Socket ID:', socket.id);
+      console.log('[Socket] 🔗 Connected to:', API_URL);
+      console.log('[Socket] ==========================================\n');
+      
       isConnecting = false;
+      connectionAttempts = 0;
+      
+      // Send test ping to verify connection
+      setTimeout(() => {
+        socket.emit('ping', { message: 'Hello from client!' });
+      }, 500);
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('[Socket] 🔴 Disconnected:', reason);
-      console.log('[Socket] Was connected:', socket.connected);
+      console.log('[Socket] 🔴 DISCONNECTED. Reason:', reason);
       isConnecting = false;
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[Socket] ❌ Connection error:', error);
-      console.error('[Socket] Error details:', error.message);
+      console.error('[Socket] ❌ CONNECTION ERROR:', error.message);
       isConnecting = false;
     });
 
-    socket.on('reconnect', (attemptNumber) => {
-      console.log(`[Socket] 🔄 Reconnected after ${attemptNumber} attempts`);
-    });
-
-    socket.on('reconnect_attempt', (attemptNumber) => {
-      console.log(`[Socket] 🔄 Reconnection attempt ${attemptNumber}`);
-    });
-
-    socket.on('reconnect_error', (error) => {
-      console.error('[Socket] ❌ Reconnection error:', error);
-    });
-
-    socket.on('reconnect_failed', () => {
-      console.error('[Socket] ❌ Reconnection failed');
-    });
-
-    // Listen for custom events
+    // ==================== MESSAGE EVENT HANDLERS ====================
+    
     socket.on('receiveMessage', (data) => {
-      console.log('[Socket] 📨 Received message event:', data);
-    });
-
-    socket.on('userStatus', (data) => {
-      console.log('[Socket] 👤 User status update:', data);
-    });
-
-    socket.on('typingStatus', (data) => {
-      console.log('[Socket] ✍️ Typing status:', data);
+      console.log('\n[Socket] ==========================================');
+      console.log('[Socket] 📨 RECEIVED MESSAGE EVENT (Frontend)');
+      console.log('[Socket] 📝 From:', data.sender?.name || 'Unknown');
+      console.log('[Socket] 📝 Message:', data.text || 'No text');
+      console.log('[Socket] 📝 Message ID:', data._id);
+      console.log('[Socket] ==========================================\n');
+      
+      // Call all registered handlers
+      eventHandlers.receiveMessage.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in receiveMessage handler:', error);
+        }
+      });
     });
 
     socket.on('messageStatusUpdate', (data) => {
       console.log('[Socket] ✅ Message status update:', data);
+      eventHandlers.messageStatusUpdate.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in messageStatusUpdate handler:', error);
+        }
+      });
     });
 
-    console.log('[Socket] Socket instance created, waiting for connection...');
+    socket.on('userStatus', (data) => {
+      console.log('[Socket] 👤 User status update:', data);
+      eventHandlers.userStatus.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in userStatus handler:', error);
+        }
+      });
+    });
+
+    socket.on('typingStatus', (data) => {
+      console.log('[Socket] ✍️ Typing status:', data);
+      eventHandlers.typingStatus.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in typingStatus handler:', error);
+        }
+      });
+    });
+
+    socket.on('pong', (data) => {
+      console.log('[Socket] 🏓 Received pong from server:', data);
+      eventHandlers.pong.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in pong handler:', error);
+        }
+      });
+    });
+
+    socket.on('test_response', (data) => {
+      console.log('[Socket] 🧪 Test response:', data);
+      eventHandlers.test_response.forEach(handler => {
+        try {
+          handler(data);
+        } catch (error) {
+          console.error('[Socket] ❌ Error in test_response handler:', error);
+        }
+      });
+    });
+
+    // Debug: Log all events
+    socket.onAny((eventName, ...args) => {
+      if (!['pong', 'ping'].includes(eventName)) {
+        console.log(`[Socket] 📡 Event received: ${eventName}`, args.length > 0 ? args[0] : 'No data');
+      }
+    });
+
+    console.log('[Socket] 🚀 Socket instance created, connecting...');
     return socket;
+    
   } catch (error) {
-    console.error('[Socket] Error initializing socket:', error);
+    console.error('[Socket] ❌ Error initializing socket:', error);
     isConnecting = false;
     throw error;
   }
 };
 
-export const getSocketStatus = () => {
-  if (!socket) return 'not_initialized';
-  return {
-    connected: socket.connected,
-    id: socket.id,
-    disconnected: socket.disconnected
-  };
-};
 
-export const disconnectSocket = () => {
-  console.log('[Socket] Disconnecting socket');
+// In your frontend socket.js service, modify onReceiveMessage:
+export const onReceiveMessage = (handler) => {
+  console.log('[Socket] 📡 Registering receiveMessage handler');
+  
+  // Check if handler already exists
+  const exists = eventHandlers.receiveMessage.find(h => h.toString() === handler.toString());
+  if (exists) {
+    console.log('[Socket] ⚠️ Handler already registered, skipping');
+    return;
+  }
+  
+  eventHandlers.receiveMessage.push(handler);
+  
   if (socket) {
-    socket.disconnect();
-    socket = null;
+    socket.on('receiveMessage', handler);
   }
-  isConnecting = false;
 };
 
-// Send message function with logging
-export const sendMessage = (recipientId, text, attachment = null) => {
-  if (!socket) {
-    console.error('[Socket] ❌ Cannot send message: Socket not initialized');
-    return false;
+export const offReceiveMessage = (handler) => {
+  console.log('[Socket] 📡 Removing receiveMessage handler');
+  const index = eventHandlers.receiveMessage.indexOf(handler);
+  if (index > -1) {
+    eventHandlers.receiveMessage.splice(index, 1);
   }
   
-  if (!socket.connected) {
-    console.error('[Socket] ❌ Cannot send message: Socket not connected');
-    return false;
+  if (socket) {
+    socket.off('receiveMessage', handler);
   }
-  
-  console.log(`[Socket] 📤 Sending message to ${recipientId}:`, { 
-    text, 
-    hasAttachment: !!attachment,
-    socketId: socket.id,
-    socketConnected: socket.connected
-  });
-  
-  socket.emit('sendMessage', { recipientId, text, attachment });
-  return true;
 };
 
-// Generic event handlers with logging
+export const onUserStatusUpdate = (handler) => {
+  if (!eventHandlers.userStatus.includes(handler)) {
+    eventHandlers.userStatus.push(handler);
+  }
+  
+  if (socket) {
+    socket.on('userStatus', handler);
+  }
+};
+
+// Generic event handlers
 export const on = (event, handler) => {
   console.log(`[Socket] 📡 Adding listener for event: ${event}`);
   if (socket) {
-    socket.on(event, (...args) => {
-      console.log(`[Socket] 📨 Event ${event} fired with data:`, args[0]);
-      handler(...args);
-    });
-  } else {
-    console.warn(`[Socket] ⚠️ Cannot add listener for ${event}: Socket not initialized`);
+    socket.on(event, handler);
   }
 };
 
@@ -173,48 +250,72 @@ export const off = (event, handler) => {
 export const emit = (event, data) => {
   console.log(`[Socket] 📤 Emitting event ${event}:`, data);
   if (socket) {
-    if (!socket.connected) {
-      console.error(`[Socket] ❌ Cannot emit ${event}: Socket not connected`);
-      return false;
-    }
     socket.emit(event, data);
     return true;
-  } else {
-    console.error(`[Socket] ❌ Cannot emit ${event}: Socket not initialized`);
+  }
+  console.error(`[Socket] ❌ Cannot emit ${event}: Socket not initialized`);
+  return false;
+};
+
+// Send message with validation
+export const sendMessage = (recipientId, text, attachment = null) => {
+  if (!socket || !socket.connected) {
+    console.error('[Socket] ❌ Cannot send: Socket not connected');
     return false;
   }
+  
+  console.log(`[Socket] 📤 Sending message to ${recipientId}:`, text?.substring(0, 50) || 'No text');
+  socket.emit('sendMessage', { recipientId, text, attachment });
+  return true;
 };
 
-export const onReceiveMessage = (handler) => {
-  on('receiveMessage', handler);
-};
-
-export const offReceiveMessage = (handler) => {
-  off('receiveMessage', handler);
-};
-
-export const onUserStatusUpdate = (handler) => {
-  on('userStatus', handler);
-};
-
-// Add this to check socket connection periodically
-export const checkConnection = () => {
-  if (socket) {
-    console.log('[Socket] Connection check:', {
-      connected: socket.connected,
-      id: socket.id,
-      disconnected: socket.disconnected,
-      io: {
-        uri: socket.io?.uri,
-        readyState: socket.io?.readyState
-      }
-    });
-  } else {
-    console.log('[Socket] Socket not initialized');
+export const getSocketStatus = () => {
+  if (!socket) {
+    return {
+      status: 'not_initialized',
+      connected: false,
+      id: null
+    };
   }
-  return socket?.connected || false;
+  
+  return {
+    status: socket.connected ? 'connected' : 'disconnected',
+    connected: socket.connected,
+    id: socket.id
+  };
 };
 
+export const disconnectSocket = () => {
+  console.log('[Socket] 🔌 Disconnecting socket');
+  if (socket) {
+    socket.disconnect();
+    socket.removeAllListeners();
+    socket = null;
+  }
+  isConnecting = false;
+  connectionAttempts = 0;
+  
+  // Clear all handlers
+  Object.keys(eventHandlers).forEach(key => {
+    eventHandlers[key] = [];
+  });
+};
+
+export const checkConnection = () => {
+  const status = getSocketStatus();
+  console.log('[Socket] 🔍 Connection check:', status);
+  return status.connected;
+};
+
+export const testConnection = () => {
+  if (socket && socket.connected) {
+    console.log('[Socket] 🧪 Testing connection...');
+    socket.emit('test', { test: 'connection test', timestamp: Date.now() });
+    return true;
+  }
+  console.error('[Socket] ❌ Cannot test: Socket not connected');
+  return false;
+};
 
 
 // import io from 'socket.io-client';
