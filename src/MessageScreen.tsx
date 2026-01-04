@@ -869,6 +869,7 @@
 // });
 
 // export default MessageScreen;
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -942,6 +943,12 @@ const MessageScreen = () => {
   const navigation = useNavigation();
   const { user: initialUser, otherUserId: paramOtherUserId, senderId: paramSenderId } = route.params || {};
 
+
+
+  const [socketStatus, setSocketStatus] = useState('disconnected');
+
+
+
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchingUser, setFetchingUser] = useState(true);
@@ -972,6 +979,50 @@ const MessageScreen = () => {
   useEffect(() => {
     console.log('MessageScreen params:', route.params);
   }, []);
+
+
+useEffect(() => {
+  const interval = setInterval(() => {
+    const status = socket.getSocketStatus();
+    console.log('[MessageScreen] Socket status:', status);
+    if (typeof status === 'object') {
+      setSocketStatus(status.connected ? 'connected' : 'disconnected');
+    } else {
+      setSocketStatus(status);
+    }
+  }, 5000);
+
+  return () => clearInterval(interval);
+}, []);
+
+  // Add this useEffect to initialize socket
+useEffect(() => {
+  const initializeSocket = async () => {
+    try {
+      console.log('[MessageScreen] Initializing socket...');
+      const socketInstance = await socket.initSocket();
+      console.log('[MessageScreen] Socket initialized:', !!socketInstance);
+      
+      // Check connection status
+      setTimeout(() => {
+        socket.checkConnection();
+      }, 1000);
+    } catch (error) {
+      console.error('[MessageScreen] Failed to initialize socket:', error);
+    }
+  };
+
+  initializeSocket();
+
+  // Cleanup on unmount
+  return () => {
+    console.log('[MessageScreen] Cleaning up socket listeners');
+    socket.disconnectSocket();
+  };
+}, []);
+
+
+
 
   // Effect to load otherUser data
   useEffect(() => {
@@ -1222,31 +1273,90 @@ const MessageScreen = () => {
     }
   }, [otherUser]);
 
-  // Handle message sending
+
+  
   const handleSend = () => {
-    const otherUserId = otherUser._id || otherUser.id;
-    const currentUserId = currentUser?._id || currentUser?.id;
-    
-    if (!otherUserId || !currentUserId || (!inputText.trim() && !selectedAttachment)) return;
+  const otherUserId = otherUser._id || otherUser.id;
+  const currentUserId = currentUser?._id || currentUser?.id;
+  
+  console.log('[MessageScreen] Attempting to send message:', {
+    otherUserId,
+    currentUserId,
+    inputText,
+    hasSelectedAttachment: !!selectedAttachment,
+    socketStatus: socket.getSocketStatus()
+  });
+  
+  if (!otherUserId || !currentUserId || (!inputText.trim() && !selectedAttachment)) {
+    console.warn('[MessageScreen] Cannot send: Missing required data');
+    return;
+  }
 
-    const tempId = Date.now().toString();
-    const newMessage = {
-      _id: tempId,
-      text: inputText.trim() || '',
-      createdAt: new Date(),
-      user: { _id: currentUserId },
-      status: 'pending',
-      attachment: selectedAttachment,
-    };
+  // Check socket connection
+  const status = socket.getSocketStatus();
+  if (typeof status === 'object' && !status.connected) {
+    console.error('[MessageScreen] ❌ Cannot send: Socket not connected');
+    Alert.alert('Connection Error', 'Please check your internet connection and try again.');
+    return;
+  }
 
-    setMessages(prev => [...prev, newMessage]);
-    
-    socket.sendMessage(otherUserId, inputText.trim(), selectedAttachment);
-    
-    setInputText('');
-    setSelectedAttachment(null);
-    setShowEmojiPicker(false);
+  const tempId = Date.now().toString();
+  const newMessage = {
+    _id: tempId,
+    text: inputText.trim() || '',
+    createdAt: new Date(),
+    user: { _id: currentUserId },
+    status: 'pending',
+    attachment: selectedAttachment,
   };
+
+  console.log('[MessageScreen] Adding optimistic message:', newMessage);
+  setMessages(prev => [...prev, newMessage]);
+  
+  // Try to send via socket
+  const sent = socket.sendMessage(otherUserId, inputText.trim(), selectedAttachment);
+  
+  if (!sent) {
+    console.error('[MessageScreen] ❌ Socket send failed');
+    Alert.alert('Send Failed', 'Could not send message. Please try again.');
+    // Optionally: Fallback to HTTP API
+    sendViaHttpApi(otherUserId, inputText.trim(), selectedAttachment);
+  } else {
+    console.log('[MessageScreen] ✅ Message sent via socket');
+  }
+  
+  setInputText('');
+  setSelectedAttachment(null);
+  setShowEmojiPicker(false);
+};
+
+// HTTP fallback function
+const sendViaHttpApi = async (recipientId, text, attachment) => {
+  try {
+    const token = await AsyncStorage.getItem('authToken');
+    const response = await fetch(`${API_URL}/api/messages/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        recipientId,
+        text,
+        attachment
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log('[MessageScreen] HTTP API send success:', data);
+    } else {
+      console.error('[MessageScreen] HTTP API send failed:', response.status);
+    }
+  } catch (error) {
+    console.error('[MessageScreen] HTTP API send error:', error);
+  }
+};
 
   // Handle emoji selection
   const handleEmojiSelect = (emoji) => {
